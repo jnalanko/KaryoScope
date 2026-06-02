@@ -755,3 +755,70 @@ def _chunked_seq_reader_from_handle(
 
     if chunk:
         yield chunk
+
+
+# --- HKS-backend smoothing (reads label names, not integer IDs) ------
+
+
+def smooth_presmoothed_bed_by_name(
+    presmoothed_bed: Path,
+    smoothed_bed: Path,
+    index: HierarchyIndex,
+) -> None:
+    """Smooth a per-feature-set presmoothed BED whose column 4 is a label name.
+
+    Used by the HKS backend, which outputs label names directly rather
+    than integer feature IDs. Reads ``presmoothed_bed``, applies the same
+    merge/smooth/merge pipeline as the KMC path, and writes
+    ``smoothed_bed``.
+
+    ``novel`` intervals (the KaryoScope sentinel for k-mers not in the
+    index) are mapped to the hierarchy root internally during smoothing
+    and mapped back to ``"novel"`` on output, matching the KMC behaviour.
+    """
+    root = index.root
+
+    by_seq: dict[str, list[tuple[int, int, str]]] = {}
+    seq_order: list[str] = []
+    with presmoothed_bed.open() as fh:
+        for raw in fh:
+            line = raw.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 4:
+                raise SmoothError(
+                    f"malformed line in {presmoothed_bed} (need >= 4 columns): {raw!r}"
+                )
+            seq_name = parts[0]
+            try:
+                start, end = int(parts[1]), int(parts[2])
+            except ValueError as exc:
+                raise SmoothError(
+                    f"non-integer coordinate in {presmoothed_bed}: {raw!r}"
+                ) from exc
+            name = parts[3]
+            if seq_name not in by_seq:
+                by_seq[seq_name] = []
+                seq_order.append(seq_name)
+            by_seq[seq_name].append((start, end, name))
+
+    with smoothed_bed.open("w") as out:
+        for seq_name in seq_order:
+            intervals: list[Interval] = []
+            for start, end, name in by_seq[seq_name]:
+                is_novel = name == NOVEL_NAME
+                internal_label = root if is_novel else name
+                intervals.append(
+                    Interval(
+                        seq_name=seq_name,
+                        start=start,
+                        end=end,
+                        feature=internal_label,
+                        is_novel=is_novel,
+                    )
+                )
+            smoothed = smooth_intervals(intervals, index)
+            merged = merge_adjacent(smoothed, root)
+            for iv in merged:
+                out.write(_render_for_output(iv, root))

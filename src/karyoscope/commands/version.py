@@ -24,6 +24,7 @@ from karyoscope.paths import default_db_root, installed_databases
 #: (display_name, executable_name, --version flag).
 _EXTERNAL_TOOLS: tuple[tuple[str, str, str], ...] = (
     ("KMC", "kmc", "--version"),
+    ("HKS", "hks", "--version"),
     ("bgzip", "bgzip", "--version"),
     ("tabix", "tabix", "--version"),
     ("seqtk", "seqtk", ""),

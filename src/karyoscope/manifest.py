@@ -21,9 +21,8 @@ import yaml
 
 from karyoscope.exceptions import DatabaseLayoutError, ManifestError
 
-#: Supported index types. New backends (e.g. ``hks``) will be added here as
-#: they land. See DATABASE_LAYOUT.md for the manifest schema details.
-_SUPPORTED_INDEX_TYPES = frozenset({"kmc"})
+#: Supported index types. See DATABASE_LAYOUT.md for the manifest schema details.
+_SUPPORTED_INDEX_TYPES = frozenset({"kmc", "hks"})
 
 
 @dataclass
@@ -123,7 +122,7 @@ def parse_manifest(manifest_path: Path) -> Manifest:
             f"unsupported index type '{index_type}' in {where} "
             f"(supported: {sorted(_SUPPORTED_INDEX_TYPES)})"
         )
-    if index_type == "kmc":
+    if index_type in ("kmc", "hks"):
         basename = _require(index_raw, "basename", f"{where}:index")
         if not isinstance(basename, str):
             raise ManifestError(f"'index.basename' in {where} must be a string")
@@ -229,5 +228,13 @@ def validate_database_layout(db_dir: Path) -> Manifest:
         assert manifest.index.basename is not None  # guaranteed by parse_manifest
         _check_exists(manifest.index.basename + ".kmc_pre", "KMC index (.kmc_pre)")
         _check_exists(manifest.index.basename + ".kmc_suf", "KMC index (.kmc_suf)")
+    elif manifest.index.type == "hks":
+        assert manifest.index.basename is not None  # guaranteed by parse_manifest
+        _check_exists(manifest.index.basename + ".hksb", "HKS base index (.hksb)")
+        for fs in manifest.feature_sets:
+            _check_exists(
+                manifest.index.basename + f".{fs}.hksf",
+                f"HKS feature set file (.{fs}.hksf)",
+            )
 
     return manifest
