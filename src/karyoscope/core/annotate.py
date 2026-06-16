@@ -808,6 +808,7 @@ def _run_hks_backend(
     t_hks_start = time.perf_counter()
     for fs in requested:
         fs_file = db_dir / f"{manifest.index.basename}.{fs}.hksf"
+        hierarchy_file = db_dir / f"{manifest.index.basename}.{fs}.hierarchy.txt"
         raw_tsv = output_dir / f"{prefix}.{fs}.lookup_raw.tmp.tsv"
 
         logger.info(
@@ -837,7 +838,7 @@ def _run_hks_backend(
                 t_smo = time.perf_counter()
                 logger.info("running hks smooth for feature set %r", fs)
                 run_hks_smooth(
-                    feature_set_file=fs_file,
+                    hierarchy_file=hierarchy_file,
                     input_path=raw_tsv,
                     output_path=smoothed_paths[fs],
                     capture=True,

@@ -236,5 +236,9 @@ def validate_database_layout(db_dir: Path) -> Manifest:
                 manifest.index.basename + f".{fs}.hksf",
                 f"HKS feature set file (.{fs}.hksf)",
             )
+            _check_exists(
+                manifest.index.basename + f".{fs}.hierarchy.txt",
+                f"HKS hierarchy file (.{fs}.hierarchy.txt)",
+            )
 
     return manifest

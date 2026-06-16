@@ -249,7 +249,7 @@ def _run_hks_lookup_from_bam(
 
 def run_hks_smooth(
     *,
-    feature_set_file: Path,
+    hierarchy_file: Path,
     input_path: Path,
     output_path: Path,
     max_gap: int = _DEFAULT_SMOOTH_MAX_GAP,
@@ -259,9 +259,8 @@ def run_hks_smooth(
 
     Parameters
     ----------
-    feature_set_file
-        Path to the HKS feature-set file (``*.hksf``); used via ``--index``
-        to extract the label hierarchy.
+    hierarchy_file
+        Path to the HKS hierarchy file (``*.hierarchy.txt``) for this feature set.
     input_path
         Raw TSV produced by ``hks lookup`` (with header, ``none`` for misses).
     output_path
@@ -294,10 +293,10 @@ def run_hks_smooth(
         cmd: list[str] = [
             binary,
             "smooth",
-            "--index", str(feature_set_file),
+            "--feature-hierarchy", str(hierarchy_file),
             "-i", str(input_path),
             "-o", str(smooth_tsv),
-            "-g", str(max_gap),
+            "--max-gap", str(max_gap),
         ]
         logger.debug("running: %s", " ".join(cmd))
         run_tool(cmd, capture=capture)
