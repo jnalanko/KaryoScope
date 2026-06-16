@@ -38,6 +38,9 @@ ENV_OVERRIDE = "KARYOSCOPE_HKS"
 #: Label HKS emits for k-mers not found in the index.
 _HKS_MISS_LABEL = "none"
 
+#: Default max-gap (bases) passed to ``hks smooth``, matching karyoscope's Python default.
+_DEFAULT_SMOOTH_MAX_GAP = 1000
+
 _INPUT_EXTENSIONS: tuple[str, ...] = (
     ".fasta.gz",
     ".fa.gz",
@@ -94,12 +97,16 @@ def _infer_prefix(input_path: Path, db_basename: str) -> str:
     return f"{input_basename}.{db_basename}"
 
 
-def _postprocess_hks_output(path: Path) -> None:
-    """Replace HKS miss label ``none`` with KaryoScope's ``novel`` sentinel."""
-    text = path.read_text()
-    patched = text.replace(f"\t{_HKS_MISS_LABEL}\n", f"\t{NOVEL_NAME}\n")
-    if patched != text:
-        path.write_text(patched)
+def convert_hks_tsv_to_bed(tsv_path: Path, bed_path: Path) -> None:
+    """Convert HKS TSV output (with header) to a headerless BED file.
+
+    Strips the header line and replaces the HKS miss label ``none`` with
+    KaryoScope's ``novel`` sentinel.
+    """
+    lines = tsv_path.read_text().splitlines(keepends=True)
+    with bed_path.open("w") as out:
+        for line in lines[1:]:  # skip header
+            out.write(line.replace(f"\t{_HKS_MISS_LABEL}\n", f"\t{NOVEL_NAME}\n"))
 
 
 def run_hks_lookup(
@@ -169,7 +176,6 @@ def run_hks_lookup(
         "-q", str(input_path),
         "--report-query-names",
         "--report-misses",
-        "--no-header",
         "-t", str(n_threads),
         "-o", str(output_path),
     ]
@@ -180,7 +186,6 @@ def run_hks_lookup(
     except ExternalToolError:
         raise
 
-    _postprocess_hks_output(output_path)
     return output_path
 
 
@@ -240,3 +245,64 @@ def _run_hks_lookup_from_bam(
     finally:
         if tmp_fasta.exists():
             tmp_fasta.unlink()
+
+
+def run_hks_smooth(
+    *,
+    feature_set_file: Path,
+    input_path: Path,
+    output_path: Path,
+    max_gap: int = _DEFAULT_SMOOTH_MAX_GAP,
+    capture: bool = False,
+) -> Path:
+    """Invoke ``hks smooth`` on a lookup TSV and write the result as a BED file.
+
+    Parameters
+    ----------
+    feature_set_file
+        Path to the HKS feature-set file (``*.hksf``); used via ``--index``
+        to extract the label hierarchy.
+    input_path
+        Raw TSV produced by ``hks lookup`` (with header, ``none`` for misses).
+    output_path
+        Where to write the smoothed BED (headerless, ``novel`` for misses).
+    max_gap
+        Maximum gap in bases between adjacent intervals that are still
+        considered connected for smoothing purposes.
+    capture
+        If ``True``, capture subprocess stdout/stderr instead of passing through.
+
+    Returns
+    -------
+    Path
+        ``output_path``, after writing.
+
+    Raises
+    ------
+    ToolNotFoundError
+        If ``hks`` is not found.
+    ExternalToolError
+        If the subprocess exits with a non-zero status.
+    """
+    binary = get_hks_binary()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(suffix=".tsv", delete=False) as tmp:
+        smooth_tsv = Path(tmp.name)
+
+    try:
+        cmd: list[str] = [
+            binary,
+            "smooth",
+            "--index", str(feature_set_file),
+            "-i", str(input_path),
+            "-o", str(smooth_tsv),
+            "-g", str(max_gap),
+        ]
+        logger.debug("running: %s", " ".join(cmd))
+        run_tool(cmd, capture=capture)
+        convert_hks_tsv_to_bed(smooth_tsv, output_path)
+    finally:
+        smooth_tsv.unlink(missing_ok=True)
+
+    return output_path

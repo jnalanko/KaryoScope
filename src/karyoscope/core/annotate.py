@@ -47,7 +47,7 @@ from karyoscope.core.io.hierarchy import (
     parse_hierarchy,
     validate_hierarchy,
 )
-from karyoscope.core.io.hks import run_hks_lookup
+from karyoscope.core.io.hks import convert_hks_tsv_to_bed, run_hks_lookup, run_hks_smooth
 from karyoscope.core.io.kmc import run_get_featureids
 from karyoscope.core.smooth import (
     HierarchyIndex,
@@ -55,7 +55,6 @@ from karyoscope.core.smooth import (
     make_features_for_worker,
     process_seq_chunk,
     safe_filename,
-    smooth_presmoothed_bed_by_name,
     worker_initializer,
 )
 from karyoscope.exceptions import (
@@ -800,23 +799,16 @@ def _run_hks_backend(
     keep_presmoothed: bool,
     presmoothed_paths: dict[str, Path],
     smoothed_paths: dict[str, Path],
-    indices: dict[str, HierarchyIndex],
     threads: int,
 ) -> None:
-    """Run the HKS lookup (and optional smoothing) for every requested feature set."""
+    """Run the HKS lookup and optional smoothing for every requested feature set."""
     base_path = db_dir / (manifest.index.basename + ".hksb")
     k = manifest.kmer.size
 
     t_hks_start = time.perf_counter()
     for fs in requested:
         fs_file = db_dir / f"{manifest.index.basename}.{fs}.hksf"
-
-        if keep_presmoothed:
-            pre_path = presmoothed_paths[fs]
-        else:
-            # Smoothing needs the presmoothed BED as input; use a temp
-            # name that won't collide with any user-visible output.
-            pre_path = output_dir / f"{prefix}.{fs}.presmoothed.tmp.bed"
+        raw_tsv = output_dir / f"{prefix}.{fs}.lookup_raw.tmp.tsv"
 
         logger.info(
             "running hks lookup for feature set %r on %s (threads=%d)",
@@ -829,26 +821,35 @@ def _run_hks_backend(
             feature_set_file=fs_file,
             k=k,
             input_path=input_path,
-            output_path=pre_path,
+            output_path=raw_tsv,
             threads=threads,
             capture=True,
         )
-        if not pre_path.is_file():
+        if not raw_tsv.is_file():
             from karyoscope.exceptions import KaryoscopeError as _KE
-            raise _KE(f"hks lookup did not produce expected output at {pre_path}")
+            raise _KE(f"hks lookup did not produce expected output at {raw_tsv}")
 
-        if smooth and fs in indices:
-            t_smo = time.perf_counter()
-            smooth_presmoothed_bed_by_name(pre_path, smoothed_paths[fs], indices[fs])
-            logger.info(
-                "smoothed feature set %r in %.1fs", fs, time.perf_counter() - t_smo
-            )
+        try:
+            if keep_presmoothed:
+                convert_hks_tsv_to_bed(raw_tsv, presmoothed_paths[fs])
 
-        if not keep_presmoothed and smooth:
+            if smooth:
+                t_smo = time.perf_counter()
+                logger.info("running hks smooth for feature set %r", fs)
+                run_hks_smooth(
+                    feature_set_file=fs_file,
+                    input_path=raw_tsv,
+                    output_path=smoothed_paths[fs],
+                    capture=True,
+                )
+                logger.info(
+                    "smoothed feature set %r in %.1fs", fs, time.perf_counter() - t_smo
+                )
+        finally:
             try:
-                pre_path.unlink()
+                raw_tsv.unlink()
             except OSError as exc:
-                logger.warning("could not remove temp presmoothed BED %s: %s", pre_path, exc)
+                logger.warning("could not remove temp lookup TSV %s: %s", raw_tsv, exc)
 
     logger.info(
         "hks backend complete in %.1fs (%d feature set(s))",
@@ -1011,7 +1012,6 @@ def annotate(
             keep_presmoothed=keep_presmoothed,
             presmoothed_paths=presmoothed_paths,
             smoothed_paths=smoothed_paths,
-            indices=indices,
             threads=threads,
         )
 
